@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pulsa Multi Cabang</title>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--tx:#1b2433;--mu:#6b778c;--pr:#0b6bcb;--ok:#13795b;--er:#c0392b;--wa:#b7791f;--bd:#e3e8ef}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);color:var(--tx);font-size:15px}
+header{position:sticky;top:0;z-index:5;background:var(--pr);color:#fff;padding:12px 14px;display:flex;justify-content:space-between;align-items:center}
+header b{font-size:17px}header small{opacity:.85}
+nav{display:flex;overflow-x:auto;background:#fff;border-bottom:1px solid var(--bd);position:sticky;top:48px;z-index:4}
+nav button{flex:0 0 auto;border:0;background:none;padding:12px 14px;font-size:14px;color:var(--mu);border-bottom:3px solid transparent}
+nav button.on{color:var(--pr);border-color:var(--pr);font-weight:600}
+main{padding:12px;max-width:720px;margin:auto;padding-bottom:60px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:16px}
+label{display:block;font-size:13px;color:var(--mu);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:11px;border:1px solid #cfd7e3;border-radius:8px;font-size:15px;background:#fff;color:var(--tx)}
+textarea{min-height:120px}
+.btn{background:var(--pr);color:#fff;border:0;border-radius:8px;padding:11px 16px;font-size:15px;margin-top:12px;width:100%}
+.btn.ghost{background:#e9eef5;color:var(--tx)}.btn.sm{width:auto;padding:6px 10px;font-size:13px;margin:0}
+.btn.red{background:var(--er)}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.kpi{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kpi div{background:#f1f5fb;border-radius:10px;padding:10px}
+.kpi small{color:var(--mu);display:block}.kpi b{font-size:16px}
+.note{font-size:13px;color:var(--mu);margin-top:6px}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;background:#e9eef5}
+.ok{color:var(--ok)}.er{color:var(--er)}.wa{color:var(--wa)}
+.alert{background:#fdecea;color:var(--er);padding:8px 10px;border-radius:8px;margin:8px 0;font-size:13px}
+.item{padding:10px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.item:last-child{border:0}.item small{color:var(--mu);display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 6px;border-bottom:1px solid var(--bd);text-align:right}
+th:first-child,td:first-child{text-align:left}
+.scroll{overflow-x:auto}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:flex;align-items:flex-end}
+.sheet{background:#fff;width:100%;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+.sheet h3{margin:0 0 4px}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:99px;z-index:30;font-size:14px;display:none}
+.login{max-width:380px;margin:12vh auto;padding:0 16px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+<script>const KEY='pmc_db_v2';
+const $=id=>document.getElementById(id);
+const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-3);
+const rp=n=>'Rp '+Math.round(n||0).toLocaleString('id-ID');
+const num=v=>parseInt(String(v||'').replace(/\D/g,''),10)||0;
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fdt=t=>new Date(t).toLocaleString('id-ID',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+const sod=(t=Date.now())=>{const d=new Date(t);d.setHours(0,0,0,0);return d.getTime()};
+
+/* Jenis produk. phys=true -> barang fisik (pakai stok); false -> elektrik (potong saldo server) */
+const KINDS={
+  pulsa:{l:'Pulsa Elektrik',s:'Pulsa',phys:false},
+  paketdata:{l:'Paket Data Elektrik',s:'Paket Data',phys:false},
+  vpulsa:{l:'Voucher Gesek Pulsa',s:'V.Pulsa',phys:true},
+  vdata:{l:'Voucher Gesek Data',s:'V.Data',phys:true},
+  simfresh:{l:'SIM Fresh (Non-Registrasi)',s:'SIM Fresh',phys:true},
+  simpaket:{l:'SIM Perdana Berpaket',s:'SIM Perdana',phys:true},
+  aksesori:{l:'Aksesori (kabel, batok charger, dll)',s:'Aksesori',phys:true}
+};
+const isPhys=k=>!!(KINDS[k]&&KINDS[k].phys);
+const physKinds=()=>Object.keys(KINDS).filter(isPhys);
+const plabel=p=>(p.op&&p.op!=='-'?p.op+' ':'')+p.name;
+
+function P(kind,op,name,buy,sell,min){return{id:uid(),kind,op,name,buy,sell,min:min==null?5:min,off:false}}
+function seed(){
+  const b1=uid(),b2=uid(),p=[];
+  [['5.000',5500,6500],['10.000',10400,11500],['20.000',20400,21500],['50.000',50400,52000],['100.000',100400,102000]].forEach(x=>p.push(P('pulsa','Telkomsel','Pulsa '+x[0],x[1],x[2])));
+  ['XL','IM3','Tri','Axis','Smartfren'].forEach(o=>p.push(P('pulsa',o,'Pulsa 10.000',10400,11500)));
+  [['3GB 30 hari',30000,34000],['8GB 30 hari',55000,60000],['14GB 30 hari',75000,82000]].forEach(x=>p.push(P('paketdata','Telkomsel','Data '+x[0],x[1],x[2])));
+  p.push(P('paketdata','XL','Data 10GB 30 hari',45000,50000),P('paketdata','IM3','Data 12GB 30 hari',45000,50000));
+  [['10.000',9800,11000],['25.000',24500,26500],['50.000',49000,51500]].forEach(x=>p.push(P('vpulsa','Telkomsel','Voucher Pulsa '+x[0],x[1],x[2])));
+  p.push(P('vpulsa','IM3','Voucher Pulsa 10.000',9800,11000),P('vpulsa','XL','Voucher Pulsa 10.000',9800,11000));
+  [['1,5GB 1 hari',7500,9000],['2,5GB 5 hari',14000,16000],['2GB 30 hari',25000,28000],['14GB 30 hari',62000,68000]].forEach(x=>p.push(P('vdata','Telkomsel','Voucher Data '+x[0],x[1],x[2])));
+  p.push(P('vdata','Smartfren','Voucher Data 10GB 30 hari',40000,45000),P('vdata','Tri','Voucher Data 12GB 30 hari',40000,45000));
+  p.push(P('simfresh','Telkomsel','SIM Fresh simPATI',5000,10000),P('simfresh','Telkomsel','SIM Fresh Kartu As',5000,10000),P('simfresh','by.U','SIM Fresh',5000,10000));
+  ['IM3','Tri','XL','Axis','Smartfren'].forEach(o=>p.push(P('simfresh',o,'SIM Fresh',5000,10000)));
+  p.push(P('simpaket','Telkomsel','Perdana simPATI 3GB 30 hari',25000,32000),P('simpaket','Telkomsel','Perdana Internet 8GB 30 hari',32000,40000),P('simpaket','Telkomsel','Perdana Internet 14GB 30 hari',45000,55000));
+  ['IM3','Tri','XL','Axis','Smartfren'].forEach(o=>p.push(P('simpaket',o,'Perdana 30 hari',25000,32000)));
+  p.push(P('aksesori','-','Kabel Charger Type-C',8000,15000,3),P('aksesori','-','Kabel Charger Micro USB',6000,12000,3),P('aksesori','-','Kabel Charger Lightning (iPhone)',15000,30000,3),
+         P('aksesori','-','Batok Charger 10W',12000,25000,3),P('aksesori','-','Batok Charger 20W Fast Charging',25000,50000,3));
+  return{
+    branches:[{id:b1,name:'Cabang Pusat',pic:'',min:500000},{id:b2,name:'Cabang 2',pic:'',min:500000}],
+    operators:['Telkomsel','by.U','IM3','Tri','XL','Axis','Smartfren'],
+    products:p,tx:[],ledger:[],stock:[],expenses:[],closings:[],
+    users:[{id:uid(),name:'Owner',role:'owner',branch:'',pin:'1234'}]
+  };
+}
+function load(){try{const j=localStorage.getItem(KEY);if(j)return JSON.parse(j)}catch(e){}return seed()}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
+let db=load(),me=null,tab='home',rng='today',sf={kind:'pulsa',op:'all'},sk='all';
+
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',2200)}
+function ask(title,fields,ok,label){
+  const m=document.createElement('div');m.className='modal';
+  const f=fields.map(f=>{
+    let c;
+    if(f.options)c='<select data-k="'+f.k+'">'+f.options.map(o=>'<option value="'+esc(o[0])+'"'+(o[0]==f.value?' selected':'')+'>'+esc(o[1])+'</option>').join('')+'</select>';
+    else if(f.type==='textarea')c='<textarea data-k="'+f.k+'">'+esc(f.value)+'</textarea>';
+    else c='<input data-k="'+f.k+'" type="'+(f.type||'text')+'" value="'+esc(f.value)+'">';
+    return '<label>'+esc(f.label)+'</label>'+c;
+  }).join('');
+  m.innerHTML='<div class="sheet"><h3>'+esc(title)+'</h3>'+f+'<div class="row"><button class="btn ghost" data-x>Batal</button><button class="btn" data-ok>'+(label||'Simpan')+'</button></div></div>';
+  document.body.appendChild(m);
+  m.querySelector('[data-x]').onclick=()=>m.remove();
+  m.querySelector('[data-ok]').onclick=()=>{const v={};m.querySelectorAll('[data-k]').forEach(e=>v[e.dataset.k]=e.value);if(ok(v)!==false)m.remove()};
+}
+function exportText(name,text){
+  if(window.Android&&Android.share){Android.share(name,text);return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.download=name;a.click();
+}
+
+/* ---------- domain ---------- */
+const isOwner=()=>me&&me.role==='owner';
+const vis=()=>isOwner()?db.branches:db.branches.filter(b=>b.id===me.branch);
+const bname=id=>(db.branches.find(b=>b.id===id)||{name:'(dihapus)'}).name;
+const visIds=()=>vis().map(b=>b.id);
+const prod=id=>db.products.find(p=>p.id===id);
+const pname=id=>{const p=prod(id);return p?plabel(p):'(dihapus)'};
+const txOk=x=>x.status!=='gagal';
+function saldo(id){
+  const l=db.ledger.filter(x=>x.branch===id).reduce((a,x)=>a+x.amount,0);
+  const t=db.tx.filter(x=>x.branch===id&&txOk(x)&&!isPhys(x.kind)).reduce((a,x)=>a+x.buy,0);
+  return l-t;
+}
+function stockQty(b,pid){
+  const m=db.stock.filter(x=>x.branch===b&&x.prod===pid).reduce((a,x)=>a+x.qty,0);
+  const t=db.tx.filter(x=>x.branch===b&&x.prod===pid&&txOk(x)).reduce((a,x)=>a+(x.qty||1),0);
+  return m-t;
+}
+const physProds=()=>db.products.filter(p=>!p.off&&isPhys(p.kind));
+function stockValue(b){return physProds().reduce((a,p)=>a+Math.max(0,stockQty(b,p.id))*p.buy,0)}
+function lowStock(b){return physProds().filter(p=>stockQty(b,p.id)<=p.min)}
+function inRange(ts){
+  if(rng==='all')return true;
+  const d=rng==='today'?0:rng==='7'?6:29;
+  return ts>=sod()-d*86400000;
+}
+function piutangList(){return db.tx.filter(x=>x.pay==='utang'&&txOk(x)&&x.sell-x.paid>0&&visIds().includes(x.branch))}
+const optsB=()=>db.branches.map(b=>'<option value="'+b.id+'">'+esc(b.name)+'</option>').join('');
+const optsP=()=>physKinds().map(k=>{const l=physProds().filter(p=>p.kind===k);return l.length?'<optgroup label="'+esc(KINDS[k].l)+'">'+l.map(p=>'<option value="'+p.id+'">'+esc(plabel(p))+'</option>').join('')+'</optgroup>':''}).join('');
+
+/* ---------- views ---------- */
+function loginView(){
+  return '<div class="login"><div class="card"><h3>Pulsa Multi Cabang</h3><small style="color:var(--mu)">Masuk untuk melanjutkan</small>'+
+  '<label>Pengguna</label><select id="l_u">'+db.users.map(u=>'<option value="'+u.id+'">'+esc(u.name)+' ('+u.role+')</option>').join('')+'</select>'+
+  '<label>PIN</label><input id="l_p" type="password" inputmode="numeric" maxlength="8">'+
+  '<button class="btn" onclick="doLogin()">Masuk</button>'+
+  '<p style="color:var(--mu);font-size:12px">PIN awal pemilik: 1234 — segera ganti di menu Atur.</p></div></div>';
+}
+function doLogin(){const u=db.users.find(x=>x.id===$('l_u').value);if(u&&u.pin===$('l_p').value){me=u;tab='home';render()}else toast('PIN salah')}
+
+function homeView(){
+  const today=sod(),bs=vis();let h='';
+  const tot=bs.reduce((a,b)=>a+saldo(b.id),0),sv=bs.reduce((a,b)=>a+stockValue(b.id),0);
+  const tt=db.tx.filter(x=>txOk(x)&&x.ts>=today&&visIds().includes(x.branch));
+  const om=tt.reduce((a,x)=>a+x.sell,0),lb=tt.reduce((a,x)=>a+x.sell-x.buy,0);
+  const pu=piutangList().reduce((a,x)=>a+x.sell-x.paid,0);
+  h+='<div class="card"><h3>Ringkasan Hari Ini</h3><div class="kpi">'+
+   '<div><small>Saldo server (elektrik)</small><b>'+rp(tot)+'</b></div><div><small>Nilai stok fisik</small><b>'+rp(sv)+'</b></div>'+
+   '<div><small>Omzet</small><b>'+rp(om)+'</b></div><div><small>Laba kotor</small><b class="ok">'+rp(lb)+'</b></div>'+
+   '<div><small>Piutang</small><b class="wa">'+rp(pu)+'</b></div><div><small>Transaksi</small><b>'+tt.length+'</b></div></div></div>';
+  bs.forEach(b=>{
+    const s=saldo(b.id),t=db.tx.filter(x=>txOk(x)&&x.ts>=today&&x.branch===b.id),low=lowStock(b.id);
+    h+='<div class="card"><h3>'+esc(b.name)+'</h3>'+
+    (s<b.min?'<div class="alert">Saldo server di bawah minimum ('+rp(b.min)+'). Segera deposit / transfer saldo.</div>':'')+
+    (low.length?'<div class="alert">Stok menipis ('+low.length+' item): '+low.slice(0,5).map(p=>esc(plabel(p))+' ('+stockQty(b.id,p.id)+')').join(', ')+(low.length>5?', ...':'')+'</div>':'')+
+    '<div class="kpi"><div><small>Saldo server</small><b>'+rp(s)+'</b></div><div><small>Nilai stok</small><b>'+rp(stockValue(b.id))+'</b></div>'+
+    '<div><small>Omzet hari ini</small><b>'+rp(t.reduce((a,x)=>a+x.sell,0))+'</b></div><div><small>Laba hari ini</small><b class="ok">'+rp(t.reduce((a,x)=>a+x.sell-x.buy,0))+'</b></div></div></div>';
+  });
+  return h;
+}
+
+function jualView(){
+  const bs=vis(),ph=isPhys(sf.kind);
+  const ops=[...new Set(db.products.filter(p=>!p.off&&p.kind===sf.kind).map(p=>p.op))];
+  const ps=db.products.filter(p=>!p.off&&p.kind===sf.kind&&(sf.op==='all'||p.op===sf.op));
+  let h='<div class="card"><h3>Transaksi Baru</h3>'+
+  '<label>Cabang</label><select id="j_b" onchange="jInfo()">'+bs.map(b=>'<option value="'+b.id+'">'+esc(b.name)+'</option>').join('')+'</select>'+
+  '<label>Jenis</label><select onchange="sf.kind=this.value;sf.op=\'all\';render()">'+Object.keys(KINDS).map(k=>'<option value="'+k+'"'+(sf.kind===k?' selected':'')+'>'+KINDS[k].l+'</option>').join('')+'</select>'+
+  '<label>Operator</label><select onchange="sf.op=this.value;render()"><option value="all">Semua</option>'+ops.map(o=>'<option value="'+esc(o)+'"'+(sf.op===o?' selected':'')+'>'+esc(o==='-'?'Umum':o)+'</option>').join('')+'</select>'+
+  '<label>Produk</label><select id="j_p" onchange="jPrice()">'+(ps.length?ps.map(p=>'<option value="'+p.id+'">'+esc(plabel(p))+'</option>').join(''):'<option value="">(belum ada produk)</option>')+'</select>'+
+  '<div id="j_info" class="note"></div>'+
+  (ph?'<label>Jumlah (pcs)</label><input id="j_q" inputmode="numeric" value="1" oninput="jInfo()">':'')+
+  (sf.kind==='aksesori'?'':'<label>'+(ph?'Nomor HP / ICCID / catatan (opsional)':'Nomor tujuan')+'</label><input id="j_t" inputmode="numeric" placeholder="08xxxxxxxxxx">')+
+  (sf.kind==='simfresh'?'<label>Registrasi biometrik kartu</label><select id="j_r"><option value="belum">Belum didaftarkan (pembeli daftar sendiri)</option><option value="sudah">Sudah didaftarkan (dibantu konter)</option></select>':'')+
+  '<label>Harga jual per unit (Rp)</label><input id="j_s" inputmode="numeric">'+
+  '<label>Pembayaran</label><select id="j_m" onchange="$(\'j_cw\').hidden=this.value!==\'utang\'"><option value="tunai">Tunai</option><option value="transfer">Transfer / QRIS</option><option value="utang">Utang (piutang)</option></select>'+
+  '<div id="j_cw" hidden><label>Nama pelanggan</label><input id="j_c"></div>'+
+  '<button class="btn" onclick="addTx()">Simpan Transaksi</button></div>';
+  const list=db.tx.filter(x=>visIds().includes(x.branch)).sort((a,b)=>b.ts-a.ts).slice(0,30);
+  h+='<div class="card"><h3>Transaksi Terakhir</h3>'+(list.length?list.map(x=>
+    '<div class="item"><div><b>'+esc(x.pname)+(x.qty>1?' ×'+x.qty:'')+'</b>'+(x.target?' → '+esc(x.target):'')+'<small>'+fdt(x.ts)+' · '+esc(bname(x.branch))+' · '+x.pay+(x.cust?' · '+esc(x.cust):'')+(x.reg?' · registrasi: '+x.reg:'')+' · '+esc(x.by)+'</small></div>'+
+    '<div style="text-align:right"><b>'+rp(x.sell)+'</b><br><select style="padding:4px;font-size:12px" onchange="setSt(\''+x.id+'\',this.value)">'+
+    ['sukses','pending','gagal'].map(s=>'<option'+(x.status===s?' selected':'')+'>'+s+'</option>').join('')+'</select></div></div>').join(''):'<small>Belum ada transaksi.</small>')+'</div>';
+  return h;
+}
+function jPrice(){const p=prod($('j_p').value);if(p)$('j_s').value=p.sell;jInfo()}
+function jInfo(){
+  const el=$('j_info');if(!el)return;const b=$('j_b').value,p=prod($('j_p').value);
+  if(!p){el.textContent='';return}
+  el.innerHTML=isPhys(p.kind)?'Stok di cabang ini: <b>'+stockQty(b,p.id)+'</b> pcs · modal '+rp(p.buy):'Saldo server cabang: <b>'+rp(saldo(b))+'</b> · modal '+rp(p.buy);
+}
+function addTx(){
+  const b=$('j_b').value,p=prod($('j_p').value);
+  if(!p)return toast('Pilih produk dulu');
+  const ph=isPhys(p.kind),q=ph?Math.max(1,num($('j_q').value)):1;
+  const t=$('j_t')?$('j_t').value.trim():'',s=num($('j_s').value),m=$('j_m').value,c=$('j_c').value.trim();
+  if(!ph&&!t)return toast('Isi nomor tujuan');
+  if(!s)return toast('Isi harga jual');
+  if(m==='utang'&&!c)return toast('Isi nama pelanggan');
+  if(ph){if(stockQty(b,p.id)<q)return toast('Stok tidak cukup (sisa '+stockQty(b,p.id)+')')}
+  else if(saldo(b)<p.buy)return toast('Saldo server cabang tidak cukup');
+  db.tx.push({id:uid(),ts:Date.now(),branch:b,prod:p.id,pname:plabel(p),kind:p.kind,op:p.op,qty:q,target:t,buy:p.buy*q,sell:s*q,status:'sukses',pay:m,cust:m==='utang'?c:'',paid:m==='utang'?0:s*q,reg:p.kind==='simfresh'?$('j_r').value:'',by:me.name});
+  save();toast('Transaksi tersimpan');render();
+}
+function setSt(id,s){
+  const x=db.tx.find(t=>t.id===id);if(!x)return;
+  if(x.status==='gagal'&&s!=='gagal'){
+    if(isPhys(x.kind)?stockQty(x.branch,x.prod)<(x.qty||1):saldo(x.branch)<x.buy)return toast('Stok/saldo tidak cukup untuk mengaktifkan lagi'),render();
+  }
+  x.status=s;save();toast('Status diubah');render();
+}
+
+let skv='all';
+function stokView(){
+  let h='<div class="card"><label style="margin-top:0">Filter jenis</label><select onchange="sk=this.value;render()"><option value="all">Semua barang fisik</option>'+physKinds().map(k=>'<option value="'+k+'"'+(sk===k?' selected':'')+'>'+KINDS[k].l+'</option>').join('')+'</select></div>';
+  const ps=physProds().filter(p=>sk==='all'||p.kind===sk);
+  vis().forEach(b=>{
+    h+='<div class="card"><h3>'+esc(b.name)+'</h3><div class="scroll"><table><tr><th>Produk</th><th>Stok</th><th>Nilai</th></tr>'+
+    ps.map(p=>{const q=stockQty(b.id,p.id);return '<tr><td>'+esc(plabel(p))+'</td><td class="'+(q<=p.min?'er':'')+'"><b>'+q+'</b></td><td>'+rp(Math.max(0,q)*p.buy)+'</td></tr>'}).join('')+
+    '</table></div></div>';
+  });
+  if(isOwner()){
+    h+='<div class="card"><h3>Stok Masuk (kulakan)</h3><label>Cabang</label><select id="s_b">'+optsB()+'</select><label>Produk</label><select id="s_p">'+optsP()+'</select>'+
+    '<label>Jumlah (pcs)</label><input id="s_q" inputmode="numeric"><label>Catatan (supplier / nota)</label><input id="s_n"><button class="btn" onclick="stockIn()">Tambah Stok</button></div>'+
+    '<div class="card"><h3>Transfer Stok Antar Cabang</h3><label>Dari</label><select id="x_f">'+optsB()+'</select><label>Ke</label><select id="x_t">'+optsB()+'</select><label>Produk</label><select id="x_p">'+optsP()+'</select>'+
+    '<label>Jumlah (pcs)</label><input id="x_q" inputmode="numeric"><button class="btn" onclick="stockTransfer()">Transfer Stok</button></div>'+
+    '<div class="card"><h3>Opname / Koreksi Stok</h3><label>Cabang</label><select id="o_b">'+optsB()+'</select><label>Produk</label><select id="o_p">'+optsP()+'</select>'+
+    '<label>Jumlah fisik sebenarnya (pcs)</label><input id="o_q" inputmode="numeric"><label>Alasan (rusak, hilang, hasil hitung)</label><input id="o_n"><button class="btn" onclick="stockAdjust()">Koreksi Stok</button></div>';
+  }
+  const m=db.stock.filter(x=>visIds().includes(x.branch)).sort((a,b)=>b.ts-a.ts).slice(0,25);
+  h+='<div class="card"><h3>Riwayat Stok</h3>'+(m.length?m.map(x=>'<div class="item"><div>'+({masuk:'Stok masuk',tin:'Transfer masuk',tout:'Transfer keluar',adj:'Koreksi'}[x.type])+' · '+esc(pname(x.prod))+'<small>'+fdt(x.ts)+' · '+esc(bname(x.branch))+(x.note?' · '+esc(x.note):'')+'</small></div><b class="'+(x.qty>0?'ok':'er')+'">'+(x.qty>0?'+':'')+x.qty+'</b></div>').join(''):'<small>Belum ada riwayat.</small>')+'</div>';
+  return h;
+}
+function stockIn(){const q=num($('s_q').value),p=$('s_p').value;if(!p)return toast('Belum ada produk fisik');if(!q)return toast('Isi jumlah');
+  db.stock.push({id:uid(),ts:Date.now(),branch:$('s_b').value,prod:p,qty:q,type:'masuk',note:$('s_n').value.trim()});save();toast('Stok ditambah');render()}
+function stockTransfer(){const f=$('x_f').value,t=$('x_t').value,p=$('x_p').value,q=num($('x_q').value);
+  if(!p)return toast('Pilih produk');if(f===t)return toast('Cabang asal dan tujuan sama');if(!q)return toast('Isi jumlah');if(stockQty(f,p)<q)return toast('Stok cabang asal tidak cukup');
+  const ts=Date.now();db.stock.push({id:uid(),ts,branch:f,prod:p,qty:-q,type:'tout',note:'ke '+bname(t)},{id:uid(),ts,branch:t,prod:p,qty:q,type:'tin',note:'dari '+bname(f)});save();toast('Stok dipindahkan');render()}
+function stockAdjust(){const b=$('o_b').value,p=$('o_p').value,v=$('o_q').value;if(!p)return toast('Pilih produk');if(v==='')return toast('Isi jumlah fisik');
+  const diff=num(v)-stockQty(b,p);if(!diff)return toast('Stok sudah sesuai');
+  db.stock.push({id:uid(),ts:Date.now(),branch:b,prod:p,qty:diff,type:'adj',note:$('o_n').value.trim()||'opname'});save();toast('Stok dikoreksi ('+(diff>0?'+':'')+diff+')');render()}
+
+function saldoView(){
+  let h='<div class="card"><small style="color:var(--mu)">Saldo server dipakai untuk pulsa & paket data elektrik. Voucher gesek, SIM, dan aksesori memakai stok (menu Stok).</small></div>';
+  vis().forEach(b=>{const s=saldo(b.id);
+    h+='<div class="card"><div class="item"><div><b>'+esc(b.name)+'</b><small>Batas minimum '+rp(b.min)+'</small></div><b class="'+(s<b.min?'er':'ok')+'">'+rp(s)+'</b></div></div>'});
+  if(isOwner()){
+    h+='<div class="card"><h3>Deposit Saldo ke Cabang</h3><label>Cabang</label><select id="d_b">'+optsB()+'</select>'+
+    '<label>Jumlah (Rp)</label><input id="d_a" inputmode="numeric"><label>Catatan (mis. nama supplier/bank)</label><input id="d_n">'+
+    '<button class="btn" onclick="doDeposit()">Tambah Saldo</button></div>'+
+    '<div class="card"><h3>Transfer Saldo Antar Cabang</h3><label>Dari</label><select id="t_f">'+optsB()+'</select><label>Ke</label><select id="t_t">'+optsB()+'</select>'+
+    '<label>Jumlah (Rp)</label><input id="t_a" inputmode="numeric"><button class="btn" onclick="doTransfer()">Transfer</button></div>';
+  }
+  const l=db.ledger.filter(x=>visIds().includes(x.branch)).sort((a,b)=>b.ts-a.ts).slice(0,30);
+  h+='<div class="card"><h3>Riwayat Saldo</h3>'+(l.length?l.map(x=>'<div class="item"><div>'+({deposit:'Deposit',tin:'Transfer masuk',tout:'Transfer keluar'}[x.type])+'<small>'+fdt(x.ts)+' · '+esc(bname(x.branch))+(x.note?' · '+esc(x.note):'')+'</small></div><b class="'+(x.amount>0?'ok':'er')+'">'+(x.amount>0?'+':'')+rp(x.amount)+'</b></div>').join(''):'<small>Belum ada riwayat.</small>')+'</div>';
+  return h;
+}
+function doDeposit(){const a=num($('d_a').value);if(!a)return toast('Isi jumlah');
+  db.ledger.push({id:uid(),ts:Date.now(),branch:$('d_b').value,type:'deposit',amount:a,note:$('d_n').value.trim()});save();toast('Saldo ditambah');render()}
+function doTransfer(){const f=$('t_f').value,t=$('t_t').value,a=num($('t_a').value);
+  if(f===t)return toast('Cabang asal dan tujuan sama');if(!a)return toast('Isi jumlah');if(saldo(f)<a)return toast('Saldo cabang asal tidak cukup');
+  const ts=Date.now();
+  db.ledger.push({id:uid(),ts,branch:f,type:'tout',amount:-a,note:'ke '+bname(t)},{id:uid(),ts,branch:t,type:'tin',amount:a,note:'dari '+bname(f)});
+  save();toast('Transfer berhasil');render()}
+
+function piutangView(){
+  const l=piutangList().sort((a,b)=>a.ts-b.ts),tot=l.reduce((a,x)=>a+x.sell-x.paid,0);
+  return '<div class="card"><h3>Piutang Pelanggan</h3><div class="kpi"><div><small>Total belum lunas</small><b class="wa">'+rp(tot)+'</b></div><div><small>Jumlah nota</small><b>'+l.length+'</b></div></div></div>'+
+  '<div class="card">'+(l.length?l.map(x=>'<div class="item"><div><b>'+esc(x.cust)+'</b><small>'+esc(x.pname)+(x.qty>1?' ×'+x.qty:'')+' · '+fdt(x.ts)+' · '+esc(bname(x.branch))+'</small></div><div style="text-align:right"><b>'+rp(x.sell-x.paid)+'</b><br><button class="btn sm" onclick="payDebt(\''+x.id+'\')">Bayar</button></div></div>').join(''):'<small>Tidak ada piutang.</small>')+'</div>';
+}
+function payDebt(id){const x=db.tx.find(t=>t.id===id);if(!x)return;const rest=x.sell-x.paid;
+  ask('Pembayaran '+x.cust,[{k:'a',label:'Jumlah dibayar (sisa '+rp(rest)+')',type:'number',value:rest}],v=>{
+    const a=num(v.a);if(!a||a>rest){toast('Jumlah tidak valid');return false}x.paid+=a;save();toast('Pembayaran dicatat');render()},'Catat')}
+
+function biayaView(){
+  const bs=vis(),today=sod();
+  let h='<div class="card"><h3>Catat Biaya</h3><label>Cabang</label><select id="e_b">'+bs.map(b=>'<option value="'+b.id+'">'+esc(b.name)+'</option>').join('')+'</select>'+
+  '<label>Kategori</label><select id="e_c">'+['Gaji','Sewa','Listrik','Internet','Transport','Lainnya'].map(c=>'<option>'+c+'</option>').join('')+'</select>'+
+  '<label>Jumlah (Rp)</label><input id="e_a" inputmode="numeric"><label>Catatan</label><input id="e_n"><button class="btn" onclick="addExp()">Simpan Biaya</button></div>';
+  h+='<div class="card"><h3>Tutup Kas Harian</h3>';
+  bs.forEach(b=>{
+    const inn=db.tx.filter(x=>x.branch===b.id&&txOk(x)&&x.pay==='tunai'&&x.ts>=today).reduce((a,x)=>a+x.sell,0);
+    const out=db.expenses.filter(x=>x.branch===b.id&&x.ts>=today).reduce((a,x)=>a+x.amount,0);
+    h+='<div class="item"><div><b>'+esc(b.name)+'</b><small>Kas tunai masuk '+rp(inn)+' − biaya '+rp(out)+'</small></div><div style="text-align:right"><b>'+rp(inn-out)+'</b><br><button class="btn sm" onclick="closeKas(\''+b.id+'\','+(inn-out)+')">Tutup kas</button></div></div>';
+  });
+  h+='</div>';
+  const cl=db.closings.filter(x=>visIds().includes(x.branch)).sort((a,b)=>b.ts-a.ts).slice(0,10);
+  if(cl.length)h+='<div class="card"><h3>Riwayat Tutup Kas</h3>'+cl.map(x=>'<div class="item"><div>'+esc(bname(x.branch))+'<small>'+fdt(x.ts)+' · seharusnya '+rp(x.expected)+' · fisik '+rp(x.actual)+' · '+esc(x.by)+'</small></div><b class="'+(x.actual-x.expected===0?'ok':'er')+'">'+(x.actual-x.expected>0?'+':'')+rp(x.actual-x.expected)+'</b></div>').join('')+'</div>';
+  const ex=db.expenses.filter(x=>visIds().includes(x.branch)).sort((a,b)=>b.ts-a.ts).slice(0,20);
+  h+='<div class="card"><h3>Biaya Terakhir</h3>'+(ex.length?ex.map(x=>'<div class="item"><div>'+esc(x.cat)+'<small>'+fdt(x.ts)+' · '+esc(bname(x.branch))+(x.note?' · '+esc(x.note):'')+'</small></div><b>'+rp(x.amount)+'</b></div>').join(''):'<small>Belum ada biaya.</small>')+'</div>';
+  return h;
+}
+function addExp(){const a=num($('e_a').value);if(!a)return toast('Isi jumlah');
+  db.expenses.push({id:uid(),ts:Date.now(),branch:$('e_b').value,cat:$('e_c').value,amount:a,note:$('e_n').value.trim()});save();toast('Biaya disimpan');render()}
+function closeKas(b,exp){ask('Tutup kas '+bname(b),[{k:'a',label:'Uang tunai fisik di laci (seharusnya '+rp(exp)+')',type:'number',value:exp}],v=>{
+  db.closings.push({id:uid(),ts:Date.now(),branch:b,expected:exp,actual:num(v.a),by:me.name});save();toast('Kas ditutup');render()},'Tutup kas')}
+
+function laporanData(){
+  return vis().map(b=>{
+    const t=db.tx.filter(x=>x.branch===b.id&&txOk(x)&&inRange(x.ts));
+    const om=t.reduce((a,x)=>a+x.sell,0),md=t.reduce((a,x)=>a+x.buy,0);
+    const bi=db.expenses.filter(x=>x.branch===b.id&&inRange(x.ts)).reduce((a,x)=>a+x.amount,0);
+    return{b,n:t.length,om,md,lb:om-md,bi,net:om-md-bi};
+  });
+}
+function laporanView(){
+  const d=laporanData(),sum=k=>d.reduce((a,x)=>a+x[k],0);
+  let h='<div class="card"><h3>Laporan</h3><select onchange="rng=this.value;render()">'+[['today','Hari ini'],['7','7 hari'],['30','30 hari'],['all','Semua']].map(o=>'<option value="'+o[0]+'"'+(rng===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')+'</select></div>';
+  h+='<div class="card scroll"><h3>Per Cabang</h3><table><tr><th>Cabang</th><th>Trx</th><th>Omzet</th><th>Laba</th><th>Biaya</th><th>Bersih</th></tr>'+
+  d.map(x=>'<tr><td>'+esc(x.b.name)+'</td><td>'+x.n+'</td><td>'+rp(x.om)+'</td><td>'+rp(x.lb)+'</td><td>'+rp(x.bi)+'</td><td class="'+(x.net<0?'er':'ok')+'">'+rp(x.net)+'</td></tr>').join('')+
+  '<tr><th>Total</th><th>'+sum('n')+'</th><th>'+rp(sum('om'))+'</th><th>'+rp(sum('lb'))+'</th><th>'+rp(sum('bi'))+'</th><th>'+rp(sum('net'))+'</th></tr></table></div>';
+  const tx=db.tx.filter(x=>txOk(x)&&inRange(x.ts)&&visIds().includes(x.branch));
+  const k={};tx.forEach(x=>{const o=k[x.kind]=k[x.kind]||{q:0,om:0,lb:0};o.q+=x.qty||1;o.om+=x.sell;o.lb+=x.sell-x.buy});
+  h+='<div class="card scroll"><h3>Per Jenis Produk</h3><table><tr><th>Jenis</th><th>Qty</th><th>Omzet</th><th>Laba</th></tr>'+
+  (Object.keys(k).length?Object.keys(k).map(c=>'<tr><td>'+esc((KINDS[c]||{l:c}).l)+'</td><td>'+k[c].q+'</td><td>'+rp(k[c].om)+'</td><td class="ok">'+rp(k[c].lb)+'</td></tr>').join(''):'<tr><td colspan="4">Belum ada data.</td></tr>')+'</table></div>';
+  const m={};tx.forEach(x=>{const o=m[x.pname]=m[x.pname]||{n:0,l:0};o.n+=x.qty||1;o.l+=x.sell-x.buy});
+  const top=Object.entries(m).sort((a,b)=>b[1].l-a[1].l).slice(0,8);
+  h+='<div class="card"><h3>Produk Terlaris (by laba)</h3>'+(top.length?top.map(([n,v])=>'<div class="item"><div>'+esc(n)+'<small>terjual '+v.n+'</small></div><b class="ok">'+rp(v.l)+'</b></div>').join(''):'<small>Belum ada data.</small>')+'</div>';
+  h+='<div class="card scroll"><h3>Posisi Stok & Saldo</h3><table><tr><th>Cabang</th><th>Saldo</th><th>Nilai stok</th><th>Stok tipis</th></tr>'+
+  vis().map(b=>'<tr><td>'+esc(b.name)+'</td><td>'+rp(saldo(b.id))+'</td><td>'+rp(stockValue(b.id))+'</td><td>'+lowStock(b.id).length+'</td></tr>').join('')+'</table></div>';
+  h+='<button class="btn" onclick="exportCsv()">Bagikan transaksi (CSV)</button>';
+  return h;
+}
+function exportCsv(){
+  const q=s=>'"'+String(s==null?'':s).replace(/"/g,'""')+'"';
+  const rows=[['Waktu','Cabang','Jenis','Operator','Produk','Qty','Tujuan/Catatan','Modal','Jual','Laba','Status','Pembayaran','Pelanggan','Dibayar','Registrasi','Kasir'].join(',')];
+  db.tx.filter(x=>inRange(x.ts)&&visIds().includes(x.branch)).sort((a,b)=>a.ts-b.ts).forEach(x=>rows.push([new Date(x.ts).toISOString(),bname(x.branch),(KINDS[x.kind]||{l:x.kind}).l,x.op,x.pname,x.qty||1,x.target,x.buy,x.sell,x.sell-x.buy,x.status,x.pay,x.cust,x.paid,x.reg,x.by].map(q).join(',')));
+  exportText('transaksi-'+new Date().toISOString().slice(0,10)+'.csv',rows.join('\n'));
+}
+
+function setView(){
+  let h='<div class="card"><h3>Cabang</h3>'+db.branches.map(b=>'<div class="item"><div><b>'+esc(b.name)+'</b><small>PIC: '+esc(b.pic||'-')+' · min saldo '+rp(b.min)+'</small></div><div><button class="btn sm" onclick="editBranch(\''+b.id+'\')">Ubah</button> <button class="btn sm red" onclick="delBranch(\''+b.id+'\')">Hapus</button></div></div>').join('')+
+  '<button class="btn" onclick="editBranch()">+ Tambah cabang</button></div>';
+  h+='<div class="card"><h3>Operator</h3><div>'+db.operators.map(o=>'<span class="badge" style="margin:2px">'+esc(o)+' <a href="#" onclick="delOp(\''+esc(o).replace(/'/g,"\\'")+'\');return false" style="color:var(--er);text-decoration:none">✕</a></span>').join(' ')+'</div><button class="btn" onclick="addOp()">+ Tambah operator</button></div>';
+  h+='<div class="card"><h3>Produk & Harga</h3><small style="color:var(--mu)">Harga di sini hanya contoh — sesuaikan dengan harga modal dari supplier/distributor Anda.</small>'+
+  '<button class="btn ghost" onclick="bulkGen()">Buat banyak nominal sekaligus (pulsa/voucher)</button><button class="btn" onclick="editProd()">+ Tambah produk</button>';
+  Object.keys(KINDS).forEach(k=>{const l=db.products.filter(p=>p.kind===k);if(!l.length)return;
+    h+='<h3 style="margin-top:16px">'+esc(KINDS[k].l)+'</h3>'+l.map(p=>'<div class="item"><div><b'+(p.off?' style="text-decoration:line-through;color:var(--mu)"':'')+'>'+esc(plabel(p))+'</b><small>modal '+rp(p.buy)+' · jual '+rp(p.sell)+(isPhys(k)?' · min stok '+p.min:'')+(p.off?' · nonaktif':'')+'</small></div><div><button class="btn sm" onclick="editProd(\''+p.id+'\')">Ubah</button> <button class="btn sm red" onclick="delProd(\''+p.id+'\')">Hapus</button></div></div>').join('')});
+  h+='</div>';
+  h+='<div class="card"><h3>Pengguna</h3>'+db.users.map(u=>'<div class="item"><div><b>'+esc(u.name)+'</b><small>'+u.role+(u.branch?' · '+esc(bname(u.branch)):'')+'</small></div><div><button class="btn sm" onclick="editUser(\''+u.id+'\')">Ubah</button> <button class="btn sm red" onclick="delUser(\''+u.id+'\')">Hapus</button></div></div>').join('')+
+  '<button class="btn" onclick="editUser()">+ Tambah pengguna</button></div>';
+  h+='<div class="card"><h3>Data</h3><button class="btn ghost" onclick="backup()">Bagikan backup (JSON)</button><button class="btn ghost" onclick="restore()">Pulihkan dari backup</button><button class="btn red" onclick="resetAll()">Hapus semua data</button></div>';
+  return h;
+}
+function editBranch(id){const b=db.branches.find(x=>x.id===id)||{name:'',pic:'',min:500000};
+  ask(id?'Ubah cabang':'Tambah cabang',[{k:'n',label:'Nama cabang',value:b.name},{k:'p',label:'Penanggung jawab',value:b.pic},{k:'m',label:'Batas minimum saldo server (Rp)',type:'number',value:b.min}],v=>{
+    if(!v.n.trim()){toast('Nama wajib diisi');return false}
+    if(id){b.name=v.n.trim();b.pic=v.p.trim();b.min=num(v.m)}else db.branches.push({id:uid(),name:v.n.trim(),pic:v.p.trim(),min:num(v.m)});
+    save();render()})}
+function delBranch(id){
+  if(db.branches.length<2)return toast('Minimal satu cabang');
+  if(db.tx.some(x=>x.branch===id)||db.ledger.some(x=>x.branch===id)||db.expenses.some(x=>x.branch===id)||db.stock.some(x=>x.branch===id))return toast('Cabang sudah punya data, tidak bisa dihapus');
+  ask('Hapus cabang '+bname(id)+'?',[],()=>{db.branches=db.branches.filter(b=>b.id!==id);db.users.forEach(u=>{if(u.branch===id)u.branch=''});save();render()},'Hapus')}
+function addOp(){ask('Tambah operator',[{k:'n',label:'Nama operator / merek',value:''}],v=>{const n=v.n.trim();if(!n||db.operators.includes(n)){toast('Nama kosong atau sudah ada');return false}db.operators.push(n);save();render()})}
+function delOp(o){if(db.products.some(p=>p.op===o))return toast('Masih dipakai produk');db.operators=db.operators.filter(x=>x!==o);save();render()}
+function editProd(id){
+  const p=prod(id)||{kind:sf.kind,op:db.operators[0],name:'',buy:0,sell:0,min:5,off:false};
+  ask(id?'Ubah produk':'Tambah produk',[
+    {k:'k',label:'Jenis',value:p.kind,options:Object.keys(KINDS).map(k=>[k,KINDS[k].l])},
+    {k:'o',label:'Operator',value:p.op,options:[['-','Umum (tanpa operator)']].concat(db.operators.map(o=>[o,o]))},
+    {k:'n',label:'Nama / varian produk',value:p.name},
+    {k:'b',label:'Harga modal (Rp)',type:'number',value:p.buy},
+    {k:'s',label:'Harga jual default (Rp)',type:'number',value:p.sell},
+    {k:'m',label:'Batas stok menipis (barang fisik)',type:'number',value:p.min},
+    {k:'a',label:'Status',value:p.off?'off':'on',options:[['on','Aktif'],['off','Nonaktif (disembunyikan)']]}
+  ],v=>{
+    if(!v.n.trim()){toast('Nama wajib diisi');return false}
+    const o={kind:v.k,op:v.o,name:v.n.trim(),buy:num(v.b),sell:num(v.s),min:num(v.m),off:v.a==='off'};
+    if(id)Object.assign(p,o);else db.products.push(Object.assign({id:uid()},o));save();render()})}
+function delProd(id){
+  const used=db.tx.some(x=>x.prod===id)||db.stock.some(x=>x.prod===id);
+  ask(used?'Produk sudah punya riwayat. Nonaktifkan?':'Hapus produk?',[],()=>{
+    if(used){prod(id).off=true;toast('Produk dinonaktifkan')}else db.products=db.products.filter(p=>p.id!==id);save();render()},used?'Nonaktifkan':'Hapus')}
+function bulkGen(){
+  ask('Buat banyak nominal',[
+    {k:'k',label:'Jenis',value:'pulsa',options:[['pulsa','Pulsa Elektrik'],['vpulsa','Voucher Gesek Pulsa']]},
+    {k:'o',label:'Operator',value:db.operators[0],options:db.operators.map(o=>[o,o])},
+    {k:'n',label:'Nominal (pisahkan koma)',value:'5000,10000,20000,25000,50000,100000'},
+    {k:'b',label:'Modal = nominal + Rp',type:'number',value:300},
+    {k:'s',label:'Jual = nominal + Rp',type:'number',value:1500}
+  ],v=>{
+    const ns=v.n.split(',').map(num).filter(x=>x>0);if(!ns.length){toast('Nominal kosong');return false}
+    let c=0;ns.forEach(n=>{const nm=(v.k==='pulsa'?'Pulsa ':'Voucher Pulsa ')+n.toLocaleString('id-ID');
+      if(db.products.some(p=>p.kind===v.k&&p.op===v.o&&p.name===nm))return;
+      db.products.push(P(v.k,v.o,nm,n+num(v.b),n+num(v.s)));c++});
+    save();toast(c+' produk dibuat');render()},'Buat')}
+function editUser(id){const u=db.users.find(x=>x.id===id)||{name:'',role:'kasir',branch:db.branches[0].id,pin:''};
+  ask(id?'Ubah pengguna':'Tambah pengguna',[{k:'n',label:'Nama',value:u.name},{k:'r',label:'Peran',value:u.role,options:[['owner','Owner (semua cabang)'],['kasir','Kasir (1 cabang)']]},{k:'b',label:'Cabang (untuk kasir)',value:u.branch,options:db.branches.map(b=>[b.id,b.name])},{k:'p',label:'PIN (4-8 angka)',type:'password',value:u.pin}],v=>{
+    if(!v.n.trim()||!/^\d{4,8}$/.test(v.p)){toast('Nama wajib & PIN 4-8 angka');return false}
+    if(id&&u.role==='owner'&&v.r!=='owner'&&db.users.filter(x=>x.role==='owner').length<2){toast('Harus ada minimal satu owner');return false}
+    const o={name:v.n.trim(),role:v.r,branch:v.r==='owner'?'':v.b,pin:v.p};
+    if(id)Object.assign(u,o);else db.users.push(Object.assign({id:uid()},o));save();render()})}
+function delUser(id){const u=db.users.find(x=>x.id===id);if(!u)return;
+  if(u.id===me.id)return toast('Tidak bisa menghapus diri sendiri');
+  ask('Hapus pengguna '+u.name+'?',[],()=>{db.users=db.users.filter(x=>x.id!==id);save();render()},'Hapus')}
+function backup(){exportText('backup-pulsa-'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(db))}
+function restore(){ask('Pulihkan backup',[{k:'j',label:'Tempel isi file backup (JSON)',type:'textarea',value:''}],v=>{
+  try{const o=JSON.parse(v.j);if(!o.branches||!o.products||!o.tx||!o.users)throw 0;
+    o.stock=o.stock||[];o.ledger=o.ledger||[];o.expenses=o.expenses||[];o.closings=o.closings||[];o.operators=o.operators||['Telkomsel','by.U','IM3','Tri','XL','Axis','Smartfren'];
+    db=o;save();me=null;toast('Backup dipulihkan, silakan masuk lagi');render()}catch(e){toast('Format backup tidak valid');return false}},'Pulihkan')}
+function resetAll(){ask('Hapus SEMUA data?',[],()=>{db=seed();save();me=null;render()},'Hapus semua')}
+
+/* ---------- shell ---------- */
+function render(){
+  const app=$('app');
+  if(!me){app.innerHTML=loginView();return}
+  const tabs=[['home','Beranda'],['jual','Jual'],['stok','Stok'],['saldo','Saldo'],['piutang','Piutang'],['biaya','Biaya']];
+  if(isOwner())tabs.push(['laporan','Laporan'],['set','Atur']);
+  const views={home:homeView,jual:jualView,stok:stokView,saldo:saldoView,piutang:piutangView,biaya:biayaView,laporan:laporanView,set:setView};
+  if(!views[tab]||(!isOwner()&&(tab==='laporan'||tab==='set')))tab='home';
+  app.innerHTML='<header><div><b>Pulsa Multi Cabang</b><br><small>'+esc(me.name)+' · '+(isOwner()?'Semua cabang':esc(bname(me.branch)))+'</small></div><button class="btn sm ghost" onclick="me=null;render()">Keluar</button></header>'+
+   '<nav>'+tabs.map(t=>'<button class="'+(tab===t[0]?'on':'')+'" onclick="tab=\''+t[0]+'\';render();scrollTo(0,0)">'+t[1]+'</button>').join('')+'</nav><main>'+views[tab]()+'</main>';
+  if(tab==='jual')jPrice();
+}
+render();
+</script>
+</body>
+</html>
